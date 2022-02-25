@@ -1,52 +1,79 @@
-library(dplyr)
-library(lattice)
+# install R Packages ----
+# install.packages("readxl")
+# install_github("vqv/ggbiplot")
+# install.packages("ggbiplot")
+# install.packages("stringr")
+
+# load libraries -----
+library(readxl)
+library(stringr)
+library(ggbiplot)
 library(broom)
-sf <- read_excel("ADFC-0006-E.xlsx", sheet = "data")
-Price <- sf$Price
-sqf <- sf$`Square feet`
-dayslist <-sf$`Days listed`
-bedrooms <-sf$Bedrooms
-loft <-sf$Loft
-lotsize <- sf$Lotsize
-year <- sf$Year
-zip <- as.character(sf$`Zip Code`)
-area <- sf$Neighborhood
-area <- recode(area, "Low" = 1, "Medium" = 2, "High" = 3)
-ZIP <- sf$`Zip Code`
-usdpersqf <- mean (Price/sqf)
-violentcrime <-sf$`Violent crime`
-propertycrime <- sf$`Property crime`
-str(sf)
 
-qqmath(Price)
+# disable scientific notation in R ------
+options(scipen = 999)
 
-qqmath(log(Price))
-# why i use log price instead of price https://www.investopedia.com/ask/answers/05/logvslinear.asp
+# load Excel data -----
+d <- read_xlsx("ADFC-0006-E.xlsx", sheet="data")
+summary(d)
 
-# model 1
-mod1 <- lm(log(Price) ~ sqf + dayslist + bedrooms + loft + lotsize + year + area + as.factor(zip), data = sf)
-summary(mod1)
-plot(mod1)
-predict(mod1)
+# categorize and clean data -----
+d_clean <- d[, c(-1, -3, -4, -8)]
+# d_clean$Address <- sub("#.*", "", d_clean$Address)
+d_clean$Address <- paste(str_split(sub(" #.*", "", d_clean$Address), " ", n = 2, 
+                                   simplify = TRUE)[, 2], d$`Zip Code`)
+d_clean$Bedrooms <- ifelse(d_clean$Bedrooms < 8, 
+                           d_clean$Bedrooms, 8)
+
+d$Bedrooms <- ifelse(d$Bedrooms < 8, 
+                           d$Bedrooms, 8)
+
+mod3 <-lm(d$Price ~ d$Street, data = d)
+m = lm(d$Price ~ d$Street, data = d)
+tm = tidy(m)
+tm
+tm$term[tm$p.value < 0.05]
+
+### Quantitative Analysis ----
+# predictive regression model -----
+mod_clean <- lm(Price ~ ., data=d_clean)
+summary(mod_clean)
+
+# calculate predicted values ----
+d_clean$`Predicted Price` <- predict(mod_clean, data=d_clean)
+
+# calculate residuals ----
+d_clean$`Residual Price` <- d_clean$Price - d_clean$`Predicted Price`
+
+# residuals errors distribution ----
+round(stats::quantile(d_clean$`Residual Price`, probs=seq(0.05, 1, by=0.15)), 2)
+d_clean %>% ggplot(aes(`Residual Price`)) + 
+  geom_histogram(binwidth=100000, alpha=0.3, color="blue", fill="brown") + 
+  labs(title = "Prediction Residuals", x = "Error ($)", y = "Frequency")
+
+c("Error mean", mean(d_clean$`Residual Price`))
+c("Error Standard deviation.", sd(d_clean$`Residual Price`))
+sd_error <- round(sd(d_clean$`Residual Price`), 3)
+c("Confidence Interval (95%):", -2*sd_error, +2*sd_error)
 
 
-trellis.par.set(fontsize=list(text=7))
+### Qualitative Analysis ----
+# qualitative regression model -----
+mod_short <- lm(Price ~ `Zip Code` + `Days listed` + `Bedrooms`+ `Square feet`+
+                  Lotsize + Year + Neighborhood, data=d)
+summary(mod_short)
 
-xyplot(log(Price) ~ (dayslist + bedrooms + loft + lotsize + year + area) | zip, data = sf,
-       type = c("p", "r"), cex=.2)
+# average price per Zip Code ----
+avg_zip <- setNames(aggregate(x = d$Price, by = list(d$`Zip Code`), 
+                                    FUN = "mean"), c("Zip Code", "Avg. Price"))
+avg_zip <- avg_zip %>%
+  mutate(color = (min(`Avg. Price`) == `Avg. Price` | 
+                    max(`Avg. Price`) == `Avg. Price`))
 
+summary(avg_zip)
+ggplot(avg_zip, aes(`Zip Code`, `Avg. Price`, label=`Zip Code`)) + 
+  geom_text(aes(label=`Zip Code`, color = color), 
+            size=2.5, alpha=0.7, check_overlap =TRUE) + 
+  scale_color_manual(values = c("blue", "red"))
 
-# model 2 - trial with 2 extra variables - failed. 
-mod1 <- lm(log(Price) ~ sqf + dayslist + bedrooms + loft + lotsize + year + area + as.factor(zip) + violentcrime, data = sf)
-summary(mod1)
-plot(mod1)
-predict(mod1)
-
-# plotting price / sqfoot in all zip codes
-xyplot(Price~sqf|zip,
-       pch=19,
-       cex=.2,
-       panel=function(...) {
-         panel.abline(a=0,b=usdpersqf);
-         panel.xyplot(...);
-       })
+rattle()
